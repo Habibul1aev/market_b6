@@ -1,0 +1,86 @@
+# Название pipeline — отображается в GitHub во вкладке Actions
+name: Deploy to Render
+
+
+# ===== КОГДА ЗАПУСКАТЬ =====
+on:
+  push:
+    branches:
+      - main   # запускать только при push в ветку main
+               # если пушишь в другую ветку — CI не сработает
+
+
+# ===== ЧТО ДЕЛАТЬ =====
+jobs:
+  # "test" — это название job (можно назвать как угодно)
+  test:
+    # На каком сервере запускать (GitHub даёт бесплатные виртуалки)
+    runs-on: ubuntu-latest
+
+    # Переменные окружения для этого job
+    env:
+      SECRET_KEY: "test-secret-key-for-ci"   # временный ключ для тестов
+      DEBUG: "True"
+      DATABASE_URL: "sqlite:///test_db.sqlite3"  # для тестов SQLite ок
+
+    # Шаги — выполняются по порядку, один за другим
+    steps:
+
+      # Шаг 1: Скачать код из репозитория на виртуалку GitHub
+      - name: Checkout code
+        uses: actions/checkout@v4
+        # "uses" — использует готовый action из marketplace
+        # actions/checkout — официальный action от GitHub
+
+      # Шаг 2: Установить Python нужной версии
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"   # укажи свою версию Python
+          cache: "pip"             # кешировать зависимости (быстрее повторные запуски)
+
+      # Шаг 3: Установить зависимости
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+        # "run" — обычная bash команда
+        # "|" — означает что команд будет несколько (многострочно)
+
+      # Шаг 4: Проверить что миграции не забыли создать
+      - name: Check migrations
+        run: |
+          python manage.py makemigrations --check --dry-run
+        # --check   — вернёт ошибку если есть несозданные миграции
+        # --dry-run — ничего не создаёт, только проверяет
+
+      # Шаг 5: Применить миграции (для тестовой БД)
+      - name: Run migrations
+        run: |
+          python manage.py migrate
+
+      # Шаг 6: Запустить тесты
+      - name: Run tests
+        run: |
+          python manage.py test
+        # Если тесты упадут — следующие шаги НЕ выполнятся
+        # CD не сработает — сломанный код не задеплоится
+
+  # Второй job — деплой. Запускается ПОСЛЕ "test"
+  deploy:
+    # Запускать только если job "test" прошёл успешно
+    needs: test
+
+    runs-on: ubuntu-latest
+
+    # Запускать только на ветке main (не на pull request'ах)
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+
+      # Шаг 1: Триггер деплоя на Render через webhook
+      - name: Trigger Render Deploy
+        run: |
+          curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+        # secrets.RENDER_DEPLOY_HOOK_URL — секрет из настроек GitHub
+        # ${{ }} — синтаксис для переменных в GitHub Actions
+        # curl -X POST — отправляет запрос на Render, он начинает деплой
