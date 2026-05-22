@@ -12,3 +12,5 @@ static/static_root/
 
 .vs_code
 .idea
+
+.env
